@@ -1,0 +1,73 @@
+import csv
+import json
+import os
+import shutil
+import time
+from jsonschema import validate, ValidationError
+
+# Directories
+SOURCE_DIR = "/home/bluegenix/airflow_project"
+OUTPUT_DIR = "/home/bluegenix/airflow_project/DAG_output"
+SCHEMA_PATH = os.path.join(SOURCE_DIR, "schema.json")
+
+# Ensure output directory exists
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+def load_schema():
+    with open(SCHEMA_PATH, "r") as f:
+        return json.load(f)
+
+def validate_csv(file_path, schema):
+    """Validates each row of a CSV file against the JSON schema."""
+    try:
+        with open(file_path, mode="r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row_num, row in enumerate(reader, start=1):
+                # Convert types for validation based on schema expectations
+                formatted_row = {
+                    "id": int(row["id"]),
+                    "name": str(row["name"]),
+                    "amount": float(row["amount"]),
+                    "date": str(row["date"])
+                }
+                validate(instance=formatted_row, schema=schema)
+        return True
+    except (ValidationError, ValueError, KeyError) as e:
+        print(f"Validation failed for {os.path.basename(file_path)} at row {row_num if 'row_num' in locals() else 'unknown'}: {e}")
+        return False
+    except Exception as e:
+        print(f"Error reading {file_path}: {e}")
+        return False
+
+def process_files():
+    try:
+        schema = load_schema()
+    except Exception as e:
+        print(f"Could not load schema.json: {e}")
+        return
+
+    # Look for CSV files directly inside the source directory (non-recursive)
+    for filename in os.listdir(SOURCE_DIR):
+        if filename.endswith(".csv"):
+            src_file = os.path.join(SOURCE_DIR, filename)
+            
+            # Skip if it's a directory or inside DAG_output
+            if os.path.isdir(src_file):
+                continue
+
+            print(f"Validating: {filename}...")
+            if validate_csv(src_file, schema):
+                dest_file = os.path.join(OUTPUT_DIR, filename)
+                shutil.copy2(src_file, dest_file)
+                print(f"Success: Copied {filename} to {OUTPUT_DIR}")
+            else:
+                print(f"Skipped copying due to validation errors: {filename}")
+
+if __name__ == "__main__":
+    print(f"Starting file validation & sync daemon. Polling every 10 seconds...")
+    print(f"Source: {SOURCE_DIR}")
+    print(f"Target: {OUTPUT_DIR}\n")
+    
+    while True:
+        process_files()
+        time.sleep(10)
